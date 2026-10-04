@@ -1,0 +1,120 @@
+#!/bin/sh
+
+# A script to configure the musl C library
+
+# This is intended to provide you with a way to use the musl C library
+# with modern compilers such that you will be able to use most C23
+# features that such compilers already provide.
+#
+# Note that this script not suited for cross compilation.
+#
+# You need
+#
+# - a native Linux system, with musl or glibc, regardless
+#
+# - a modern C compiler with good support for C23 features such as gcc
+#   (starting with version 13) or clang (starting with 17).
+
+# - a directory (denoted by sourceDir in the following) with the musl
+#   source plus C23 patches as provided here:
+#
+#   https://forge.icube.unistra.fr/icps/musl/-/branches
+#
+#   As these patches will hopefully be integrated more and more into
+#   musl's main line this is a moving target and you should make sure
+#   that you always grab the latest c23 branch. As of this writing
+#   this is c23-v11.
+#
+# - Root rights (so-called sudoer rights in Linux slang) to be able to
+#   install the compiled library and wrappers in a system wide
+#   directory, "/usr/local" per default.
+#
+# To configure, compile and install
+#
+#    cd sourceDir
+#    path/to/this/directory/build-musl COMPILER [FLAG] [LOGFILE]
+#
+# where
+#
+# - COMPILER is the name of the compiler, for example "gcc-13" or
+#   "clang-17".
+#
+# (FLAG and LOGFILE are optional and not interesting in general.)
+#
+# For example with
+#
+#    path/to/this/directory/build-musl clang-18
+#
+# the LOGFILE is musl-log-clang-18.txt in sourceDir, and the
+# installation is in /usr/local/musl-clang-18. Note that to be able to
+# install, it is usually necessary to collect your password, which is
+# done by a program referred to by the SUDO_ASKPASS variable
+# below. Per default this will result in a popup at the end of
+# compilation that blocks your screen.
+
+# The interface that you then should use is bin/cc, for the example
+# above that would be
+#
+#        /usr/local/musl-clang-18/bin/cc
+#
+# You should be able to use this just as any other compiler
+# interface. To use this interface to compile in C23 mode you probably
+# have to add an option "-std=c23" or "-std=c2x".
+
+
+PREFIXDIR="${PREFIXDIR:-/usr/local}"
+LOGFILE="${LOGFILE:-musl-log}"
+SUDO_ASKPASS="${SUDO_ASKPASS:-/usr/bin/ssh-askpass}"
+
+export SUDO_ASKPASS
+
+COMMANDLINE="$*"
+
+if [ $# -gt 0 ] ; then
+    export CC="$1"
+    PREFIXDIR="${PREFIXDIR}/musl-$1"
+    LOGFILE="${LOGFILE}-$1"
+    shift
+fi
+
+if [ $# -gt 0 ] ; then
+    export CFLAGS="-std=$1"
+    PREFIXDIR="${PREFIXDIR}-$1"
+    LOGFILE="${LOGFILE}-$1"
+    shift
+fi
+
+if [ $# -gt 0 ] ; then
+    export CFLAGS="${CFLAGS} $*"
+    PREFIXDIR="${PREFIXDIR}-$1"
+    LOGFILE="${LOGFILE}-$1"
+fi
+
+LOGFILE="${LOGFILE}.txt"
+
+echo > "${LOGFILE}"
+
+echo "command line: ${COMMANDLINE}"                                           | tee -a "${LOGFILE}"
+echo "building musl with prefix '${PREFIXDIR}', ask-pass '${SUDO_ASKPASS}'"   | tee -a "${LOGFILE}"
+echo "	compiler '${CC}' and flags '${CFLAGS}'"                               | tee -a "${LOGFILE}"
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" | tee -a "${LOGFILE}"
+./configure "--prefix=${PREFIXDIR}"                                            2>&1 1>>"${LOGFILE}"
+if [ $? -ne 0 ] ; then
+    echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" | tee -a "${LOGFILE}"
+    echo "configuration failed"                                                   | tee -a "${LOGFILE}"
+    cat "${LOGFILE}"
+    exit 1
+fi
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" | tee -a "${LOGFILE}"
+make clean                                                               2>&1 | tee -a "${LOGFILE}"
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" | tee -a "${LOGFILE}"
+make -j 8                                                                2>&1 | tee -a "${LOGFILE}"
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" | tee -a "${LOGFILE}"
+sudo -A make install                                                     2>&1 | tee -a "${LOGFILE}"
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" | tee -a "${LOGFILE}"
+
+if [ -x "${PREFIXDIR}/bin/musl-gcc" ] ; then
+    sudo -A ln -sf "musl-gcc" "${PREFIXDIR}/bin/cc"                      2>&1 | tee -a "${LOGFILE}"
+elif [ -x "${PREFIXDIR}/bin/musl-clang" ] ; then
+    sudo -A ln -sf "musl-clang" "${PREFIXDIR}/bin/cc"                    2>&1 | tee -a "${LOGFILE}"
+fi
